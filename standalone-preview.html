@@ -1,0 +1,1101 @@
+<!doctype html>
+<html lang="es-MX" class="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#09090b" />
+<title>WeeklyBurn — Preview autocontenido</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20512%20512%22%3E%3Crect%20width%3D%22512%22%20height%3D%22512%22%20rx%3D%22112%22%20fill%3D%22%2309090b%22%2F%3E%3Ccircle%20cx%3D%22256%22%20cy%3D%22256%22%20r%3D%22180%22%20fill%3D%22none%22%20stroke%3D%22%2327272a%22%20stroke-width%3D%2236%22%2F%3E%3Ccircle%20cx%3D%22256%22%20cy%3D%22256%22%20r%3D%22180%22%20fill%3D%22none%22%20stroke%3D%22%2310b981%22%20stroke-width%3D%2236%22%20stroke-linecap%3D%22round%22%20stroke-dasharray%3D%221131%22%20stroke-dashoffset%3D%22317%22%20transform%3D%22rotate%28-90%20256%20256%29%22%2F%3E%3Cg%20transform%3D%22translate%28256%20256%29%20scale%287.2%29%20translate%28-12%20-12%29%22%3E%3Cpath%20d%3D%22M8.5%2014.5A2.5%202.5%200%200%200%2011%2012c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054%202-6%20.5%202.5%202%204.9%204%206.5%202%201.6%203%203.5%203%205.5a7%207%200%201%201-14%200c0-1.153.433-2.294%201-3a2.5%202.5%200%200%200%202.5%202.5z%22%20fill%3D%22none%22%20stroke%3D%22%23fafafa%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E" />
+
+<!-- Tailwind CSS (play CDN) -->
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    darkMode: 'class',
+    theme: {
+      extend: {
+        fontFamily: {
+          sans: ['ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+        },
+      },
+    },
+  };
+</script>
+
+<style>
+  html { -webkit-tap-highlight-color: transparent; overscroll-behavior-y: none; }
+  body {
+    background: #09090b;
+    color: #f4f4f5;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  input { -webkit-user-select: text; user-select: text; font-size: 16px; }
+
+  /* Fondo carmesí del Modo Supervivencia. */
+  .survival-backdrop {
+    background:
+      radial-gradient(ellipse 90% 55% at 50% 0%, rgba(159, 18, 57, 0.35), transparent 70%),
+      #0c0508;
+  }
+
+  @keyframes pulse-danger { 0%, 100% { opacity: 1 } 50% { opacity: .55 } }
+  .animate-pulse-danger { animation: pulse-danger 2.4s ease-in-out infinite; }
+
+  /* Los iconos de Lucide se insertan como <svg> dentro de un <span> anfitrión. */
+  .ic { display: inline-flex; align-items: center; justify-content: center; }
+  .ic > svg { width: 1em; height: 1em; }
+
+  .gauge-arc { transition: stroke-dashoffset 700ms cubic-bezier(.22,1,.36,1), stroke 400ms ease; }
+  .bar-fill  { transition: width 500ms cubic-bezier(.22,1,.36,1), background-color 300ms ease; }
+  .seg       { transition: background-color 450ms ease; }
+</style>
+</head>
+
+<body class="font-sans">
+<div id="root"></div>
+
+<!-- React 18 + ReactDOM 18 + Babel (JSX en el navegador) + Lucide Icons -->
+<script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js" crossorigin></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.29.8/babel.min.js" crossorigin></script>
+<script src="https://cdn.jsdelivr.net/npm/lucide@0.544.0/dist/umd/lucide.min.js" crossorigin></script>
+
+<script type="text/babel" data-presets="react">
+const { useCallback, useEffect, useMemo, useRef, useState } = React;
+
+/* ========================================================================== *
+ *  1. SANEAMIENTO NUMÉRICO Y FORMATO   (puerto de src/lib/utils.ts)
+ * ========================================================================== */
+
+/** Convierte cualquier cosa en un número finito. Nunca propaga NaN/Infinity. */
+function safeNumber(value, fallback = 0) {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+/** Redondea a centavos y mata la deriva de punto flotante (0.1 + 0.2). */
+function roundCurrency(value) {
+  const safe = safeNumber(value);
+  return Math.round((safe + Number.EPSILON) * 100) / 100;
+}
+
+/**
+ * Satura al rango. Infinity -> max, -Infinity -> min, NaN -> min (extremo
+ * conservador, porque NaN no tiene orden). Nunca devuelve algo no finito.
+ */
+function clamp(value, min, max) {
+  const raw = typeof value === 'number' ? value : Number(value);
+  if (Number.isNaN(raw)) return min;
+  if (raw < min) return min;
+  if (raw > max) return max;
+  return raw;
+}
+
+const MONEY = new Intl.NumberFormat('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const MONEY_0 = new Intl.NumberFormat('es-MX', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+
+function formatCurrency(amount, symbol = '$') {
+  const safe = roundCurrency(amount);
+  return `${safe < 0 ? '-' : ''}${symbol}${MONEY.format(Math.abs(safe))}`;
+}
+
+function formatCompact(amount, symbol = '$') {
+  const safe = roundCurrency(amount);
+  return `${safe < 0 ? '-' : ''}${symbol}${MONEY_0.format(Math.abs(safe))}`;
+}
+
+function formatSigned(amount, symbol = '$') {
+  const safe = roundCurrency(amount);
+  return `${safe > 0 ? '+' : ''}${formatCurrency(safe, symbol)}`;
+}
+
+/* ========================================================================== *
+ *  2. FECHAS LOCALES
+ *
+ *  `new Date('2026-09-13')` se interpreta como medianoche UTC y cae en el día
+ *  anterior en cualquier huso negativo (México incluido). Las llaves
+ *  YYYY-MM-DD se construyen y parsean componente por componente para que los
+ *  cortes de ciclo coincidan con el reloj de pared.
+ * ========================================================================== */
+
+function startOfLocalDay(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
+}
+
+function toDateKey(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function parseDateKey(key) {
+  const [y, m, d] = String(key).slice(0, 10).split('-').map(Number);
+  if (![y, m, d].every(Number.isFinite)) return startOfLocalDay(new Date());
+  return new Date(y, m - 1, d, 0, 0, 0, 0);
+}
+
+function addDaysLocal(date, amount) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + amount, 0, 0, 0, 0);
+}
+
+/** Distancia en días naturales. Mismo día -> 0. */
+function daysBetween(from, to) {
+  const a = startOfLocalDay(from).getTime();
+  const b = startOfLocalDay(to).getTime();
+  return Math.round((b - a) / 86400000);
+}
+
+function parseTimestamp(value) {
+  if (String(value).length <= 10) return parseDateKey(value);
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? parseDateKey(value) : parsed;
+}
+
+const LONG_DATE = new Intl.DateTimeFormat('es-MX', { weekday: 'long', day: 'numeric', month: 'long' });
+const DAY_INITIAL = new Intl.DateTimeFormat('es-MX', { weekday: 'narrow' });
+const TIME = new Intl.DateTimeFormat('es-MX', { hour: '2-digit', minute: '2-digit', hour12: false });
+
+/* ========================================================================== *
+ *  3. MOTOR FINANCIERO   (puerto de src/lib/budgetEngine.ts)
+ *
+ *  Todo aquí es puro y determinista: la fecha de referencia siempre entra como
+ *  parámetro, nunca se lee el reloj por dentro.
+ * ========================================================================== */
+
+const CYCLE_LENGTH_DAYS = 7;
+
+/**
+ * Ubica la fecha de referencia dentro del ciclo. Satura `dayIndex` en
+ * [1, totalDays] para que un ciclo vencido o aún no iniciado nunca produzca
+ * índices negativos ni divisores en cero aguas abajo.
+ */
+function getWeekProgress(cycle, referenceDate) {
+  const start = parseDateKey(cycle.startDate);
+  const end = parseDateKey(cycle.endDate);
+  const today = startOfLocalDay(referenceDate);
+
+  const span = daysBetween(start, end) + 1;
+  const totalDays = span > 0 ? span : CYCLE_LENGTH_DAYS;
+
+  const rawIndex = daysBetween(start, today) + 1;
+  const isPending = rawIndex < 1;
+  const isFinished = rawIndex > totalDays;
+  const dayIndex = clamp(rawIndex, 1, totalDays);
+  const daysElapsed = dayIndex - 1;
+  const daysRemaining = isFinished ? 0 : totalDays - daysElapsed;
+
+  return {
+    totalDays,
+    dayIndex,
+    daysElapsed,
+    daysRemaining,
+    percentComplete: clamp(dayIndex / totalDays, 0, 1),
+    isLastDay: !isFinished && daysRemaining === 1,
+    isFinished,
+    isPending,
+    startDate: start,
+    endDate: end,
+  };
+}
+
+/**
+ * Cupo del día = saldo restante / días restantes.
+ *
+ * Blindajes: `daysRemaining <= 0` usa 1 como divisor (el último día recibe el
+ * saldo completo en vez de dividir entre cero); entradas no finitas se
+ * degradan a 0; saldo negativo devuelve 0 — no existe el cupo negativo, eso es
+ * Modo Supervivencia.
+ */
+function calculateDailyAllowance(remainingBalance, daysRemaining) {
+  const balance = safeNumber(remainingBalance);
+  if (balance <= 0) return 0;
+
+  const rawDays = safeNumber(daysRemaining);
+  const divisor = rawDays >= 1 ? Math.floor(rawDays) : 1;
+
+  return roundCurrency(balance / divisor);
+}
+
+/**
+ * Reparte el sobrante (o el sobregasto) del día entre los días que faltan.
+ * Subgasto: cupo 180, gastado 100 -> +80 repartidos. Sobregasto: cupo 180,
+ * gastado 250 -> -70 repartidos. Último día: no hay a quién repartirle.
+ */
+function distributeSurplus(dailyAllowance, spentToday, daysRemainingAfterToday) {
+  const allowance = Math.max(0, safeNumber(dailyAllowance));
+  const spent = Math.max(0, safeNumber(spentToday));
+  const surplus = roundCurrency(allowance - spent);
+
+  const rawDays = Math.floor(safeNumber(daysRemainingAfterToday));
+  const daysToSpread = rawDays > 0 ? rawDays : 0;
+
+  if (daysToSpread === 0) {
+    return { surplus, daysToSpread: 0, perDayDelta: 0, projectedNextAllowance: 0 };
+  }
+
+  const perDayDelta = roundCurrency(surplus / daysToSpread);
+  return {
+    surplus,
+    daysToSpread,
+    perDayDelta,
+    projectedNextAllowance: Math.max(0, roundCurrency(allowance + perDayDelta)),
+  };
+}
+
+/**
+ * Cuánto del importe de cada transacción consume realmente el cupo diario.
+ *
+ * La gasolina se cobra contra la reserva apartada mientras alcance; sólo el
+ * excedente por encima de la reserva golpea el cupo de comida. Se recorre en
+ * orden cronológico para que la atribución sea estable en cada recálculo.
+ */
+function chargedTransactions(transactions, gasReserve) {
+  const reserve = Math.max(0, safeNumber(gasReserve));
+  const ordered = [...transactions].sort(
+    (a, b) => parseTimestamp(a.date).getTime() - parseTimestamp(b.date).getTime(),
+  );
+
+  const items = [];
+  let gasCumulative = 0;
+
+  for (const tx of ordered) {
+    const amount = Math.max(0, roundCurrency(safeNumber(tx.amount)));
+
+    if (tx.category === 'combustible') {
+      const overflowBefore = Math.max(0, gasCumulative - reserve);
+      gasCumulative = roundCurrency(gasCumulative + amount);
+      const overflowAfter = Math.max(0, gasCumulative - reserve);
+      items.push({ tx, charge: roundCurrency(overflowAfter - overflowBefore) });
+    } else {
+      items.push({ tx, charge: amount });
+    }
+  }
+
+  return {
+    items,
+    gasSpent: roundCurrency(gasCumulative),
+    gasOverflow: roundCurrency(Math.max(0, gasCumulative - reserve)),
+  };
+}
+
+function resolveStatus(availableRatio, isSurvivalMode) {
+  if (isSurvivalMode) return 'survival';
+  const ratio = clamp(availableRatio, 0, 1);
+  if (ratio <= 0) return 'survival';
+  if (ratio > 0.5) return 'healthy';
+  if (ratio > 0.2) return 'caution';
+  return 'critical';
+}
+
+const STATUS_META = {
+  healthy:  { label: 'En control',    icon: 'shield-check',  ring: '#34d399', tone: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300', bar: 'bg-emerald-500' },
+  caution:  { label: 'Ajustado',      icon: 'trending-down', ring: '#fbbf24', tone: 'border-amber-400/30 bg-amber-400/10 text-amber-300',       bar: 'bg-amber-400'   },
+  critical: { label: 'Al límite',     icon: 'alert-triangle',ring: '#f43f5e', tone: 'border-rose-500/30 bg-rose-500/10 text-rose-300',          bar: 'bg-rose-500'    },
+  survival: { label: 'Supervivencia', icon: 'skull',         ring: '#f43f5e', tone: 'border-rose-500/40 bg-rose-500/15 text-rose-200',          bar: 'bg-rose-500'    },
+};
+
+/**
+ * Snapshot completo del presupuesto en un instante dado.
+ *
+ *   1. Presupuesto_Operativo = Ingreso - Reserva_Gasolina - Gastos_Fijos
+ *   2. Saldo_Restante        = Presupuesto_Operativo - Gastos_Variables
+ *   3. Cupo_Hoy              = Saldo_al_inicio_del_día / Días_Restantes
+ *
+ * El cupo se fija con el saldo al ARRANQUE del día: gastar hoy no encoge el
+ * cupo de hoy (se ve drenar la barra), sino el de los días siguientes.
+ *
+ * La reserva de gasolina se aparta COMPLETA durante todo el ciclo y el gasto de
+ * combustible sólo consume cupo cuando rebasa esa reserva. Es el equivalente
+ * algebraico de `I - (R - G) - F - (V + G) == I - R - F - V`, pero deja el
+ * presupuesto operativo estable toda la semana en vez de brincar cada vez que
+ * se carga gasolina.
+ */
+function calculateBudget({ cycle, transactions, referenceDate, currencySymbol = '$' }) {
+  const progress = getWeekProgress(cycle, referenceDate);
+  const todayKey = toDateKey(startOfLocalDay(referenceDate));
+
+  const totalIncome = Math.max(0, safeNumber(cycle.totalIncome));
+  const gasReserveTotal = clamp(safeNumber(cycle.gasReserve), 0, totalIncome);
+  const fixedExpenses = clamp(safeNumber(cycle.fixedExpenses), 0, totalIncome);
+
+  const { items, gasSpent, gasOverflow } = chargedTransactions(transactions, gasReserveTotal);
+  const gasRemaining = Math.max(0, roundCurrency(gasReserveTotal - gasSpent));
+
+  const operatingBudget = roundCurrency(totalIncome - gasReserveTotal - fixedExpenses);
+
+  let before = 0, today = 0, after = 0;
+  for (const { tx, charge } of items) {
+    const key = toDateKey(parseTimestamp(tx.date));
+    if (key < todayKey) before += charge;
+    else if (key > todayKey) after += charge;
+    else today += charge;
+  }
+  before = roundCurrency(before);
+  today = roundCurrency(today);
+  after = roundCurrency(after);
+
+  const variableSpentTotal = roundCurrency(before + today + after);
+  const remainingBalance = roundCurrency(operatingBudget - variableSpentTotal);
+  const balanceAtDayStart = roundCurrency(operatingBudget - before - after);
+
+  const dailyAllowance = progress.isFinished
+    ? 0
+    : calculateDailyAllowance(balanceAtDayStart, progress.daysRemaining);
+
+  const spentToday = today;
+  const availableToday = Math.max(0, roundCurrency(dailyAllowance - spentToday));
+  const overspentToday = Math.max(0, roundCurrency(spentToday - dailyAllowance));
+
+  const usedRatio = dailyAllowance > 0 ? clamp(spentToday / dailyAllowance, 0, 1) : (spentToday > 0 ? 1 : 0);
+  const availableRatio = dailyAllowance > 0 ? clamp(availableToday / dailyAllowance, 0, 1) : 0;
+
+  const isSurvivalMode = remainingBalance <= 0 && !progress.isFinished;
+
+  return {
+    progress,
+    operatingBudget,
+    remainingBalance,
+    balanceAtDayStart,
+    dailyAllowance,
+    spentToday,
+    availableToday,
+    overspentToday,
+    usedRatio,
+    availableRatio,
+    variableSpentTotal,
+    gas: {
+      reserve: gasReserveTotal,
+      spent: gasSpent,
+      remaining: gasRemaining,
+      overflow: gasOverflow,
+      usedRatio: gasReserveTotal > 0 ? clamp(gasSpent / gasReserveTotal, 0, 1) : (gasSpent > 0 ? 1 : 0),
+    },
+    idealDailyBurn: roundCurrency(operatingBudget / Math.max(1, progress.totalDays)),
+    surplus: distributeSurplus(dailyAllowance, spentToday, Math.max(0, progress.daysRemaining - 1)),
+    status: resolveStatus(availableRatio, isSurvivalMode),
+    isSurvivalMode,
+    currencySymbol,
+  };
+}
+
+/** Gasto que consume cupo, agrupado por día del ciclo. */
+function getDailyUsage({ cycle, transactions, referenceDate }) {
+  const progress = getWeekProgress(cycle, referenceDate);
+  const todayKey = toDateKey(startOfLocalDay(referenceDate));
+  const { items } = chargedTransactions(transactions, cycle.gasReserve);
+
+  const perDay = new Map();
+  for (const { tx, charge } of items) {
+    const key = toDateKey(parseTimestamp(tx.date));
+    perDay.set(key, roundCurrency((perDay.get(key) ?? 0) + charge));
+  }
+
+  const days = [];
+  for (let offset = 0; offset < progress.totalDays; offset += 1) {
+    const date = addDaysLocal(progress.startDate, offset);
+    const dateKey = toDateKey(date);
+    days.push({
+      dateKey,
+      date,
+      day: offset + 1,
+      spent: perDay.get(dateKey) ?? 0,
+      isToday: dateKey === todayKey,
+      isFuture: dateKey > todayKey,
+    });
+  }
+  return days;
+}
+
+const SURVIVAL_MEALS = [
+  { name: 'Huevo con frijoles',     cost: 18, hint: '2 huevos + frijol de lata, rinde 2 comidas' },
+  { name: 'Arroz + atún',           cost: 25, hint: 'Bolsa de arroz + lata, alcanza para 3 días' },
+  { name: 'Pasta con jitomate',     cost: 22, hint: 'Espagueti 500 g + puré, 4 porciones' },
+  { name: 'Sopa instantánea + huevo', cost: 15, hint: 'Súbele proteína por $8' },
+  { name: 'Quesadillas de tortilla', cost: 20, hint: 'Kilo de tortilla + queso económico' },
+  { name: 'Avena con plátano',      cost: 12, hint: 'Desayuno que aguanta hasta la tarde' },
+];
+
+const CATEGORY_LABELS = {
+  comida: 'Comida', combustible: 'Combustible', super: 'Súper', gustos: 'Gustos', urgencia: 'Urgencia',
+};
+
+/* ========================================================================== *
+ *  4. PERSISTENCIA EN LOCALSTORAGE
+ *
+ *  Sustituye a Dexie/IndexedDB de la app real. Mismo contrato de datos.
+ * ========================================================================== */
+
+const STORAGE_KEY = 'weeklyburn.preview.v1';
+
+/** Día de pago por defecto en la app: viernes (5). */
+const CYCLE_START_DAY = 5;
+
+/** Rango del ciclo de 7 días que contiene a `reference`, anclado al día de pago. */
+function resolveCycleRange(cycleStartDay, reference) {
+  const today = startOfLocalDay(reference);
+  const targetDay = ((Math.round(safeNumber(cycleStartDay)) % 7) + 7) % 7;
+  const backtrack = (today.getDay() - targetDay + 7) % 7;
+  const start = addDaysLocal(today, -backtrack);
+  return { startDate: toDateKey(start), endDate: toDateKey(addDaysLocal(start, CYCLE_LENGTH_DAYS - 1)) };
+}
+
+function createDefaultState(reference = new Date()) {
+  return {
+    cycle: {
+      ...resolveCycleRange(CYCLE_START_DAY, reference),
+      totalIncome: 2500,
+      gasReserve: 500,
+      fixedExpenses: 0,
+    },
+    transactions: [],
+  };
+}
+
+function loadState() {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return createDefaultState();
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || !parsed.cycle) return createDefaultState();
+
+    const fallback = createDefaultState();
+    const state = {
+      cycle: { ...fallback.cycle, ...parsed.cycle },
+      transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
+    };
+
+    // Si el ciclo guardado ya venció, se abre uno nuevo y se descartan los
+    // movimientos de la semana anterior — igual que el cierre de ciclo real.
+    const progress = getWeekProgress(state.cycle, new Date());
+    if (progress.isFinished) {
+      return {
+        cycle: { ...state.cycle, ...resolveCycleRange(CYCLE_START_DAY, new Date()) },
+        transactions: [],
+      };
+    }
+    return state;
+  } catch {
+    // Modo privado antiguo o cuota llena: el preview sigue funcionando en RAM.
+    return createDefaultState();
+  }
+}
+
+function saveState(state) {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    /* Sin persistencia, pero la sesión en curso no se rompe. */
+  }
+}
+
+/* ========================================================================== *
+ *  5. FEEDBACK SONORO Y HÁPTICO   (puerto de src/hooks/useHapticSound.ts)
+ * ========================================================================== */
+
+const TONES = {
+  success: { notes: [[880, 0], [1320, 0.055]], type: 'triangle', duration: 0.14, gain: 0.16, vibration: 18 },
+  gas:     { notes: [[523.25, 0], [783.99, 0.06]], type: 'sine', duration: 0.18, gain: 0.14, vibration: [12, 28, 12] },
+  warning: { notes: [[420, 0], [330, 0.08]], type: 'square', duration: 0.20, gain: 0.10, vibration: [24, 40, 24] },
+  error:   { notes: [[150, 0], [98, 0.09]], type: 'sawtooth', duration: 0.34, gain: 0.13, vibration: [40, 60, 90] },
+  tap:     { notes: [[1180, 0]], type: 'sine', duration: 0.05, gain: 0.07, vibration: 8 },
+};
+
+/**
+ * Tonos sintetizados con Web Audio API: no carga un solo archivo de audio y el
+ * disparo es inmediato. El AudioContext se crea de forma perezosa en el primer
+ * gesto para respetar la política de autoplay de los navegadores móviles.
+ */
+function useHapticSound(enabled = true) {
+  const contextRef = useRef(null);
+
+  useEffect(() => () => {
+    const ctx = contextRef.current;
+    contextRef.current = null;
+    if (ctx && ctx.state !== 'closed') ctx.close();
+  }, []);
+
+  return useCallback((tone = 'success') => {
+    const spec = TONES[tone] ?? TONES.success;
+
+    if (enabled && typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      try { navigator.vibrate(spec.vibration); } catch { /* iOS no lo soporta */ }
+    }
+    if (!enabled) return;
+
+    const Ctor = window.AudioContext || window.webkitAudioContext;
+    if (!Ctor) return;
+    if (!contextRef.current) {
+      try { contextRef.current = new Ctor(); } catch { return; }
+    }
+
+    const ctx = contextRef.current;
+    if (ctx.state === 'suspended') ctx.resume();
+    const now = ctx.currentTime;
+
+    for (const [frequency, offset] of spec.notes) {
+      const osc = ctx.createOscillator();
+      const env = ctx.createGain();
+      osc.type = spec.type;
+      osc.frequency.setValueAtTime(frequency, now + offset);
+      // Ataque corto + decaimiento exponencial: se percibe como un clic físico.
+      env.gain.setValueAtTime(0.0001, now + offset);
+      env.gain.exponentialRampToValueAtTime(spec.gain, now + offset + 0.012);
+      env.gain.exponentialRampToValueAtTime(0.0001, now + offset + spec.duration);
+      osc.connect(env); env.connect(ctx.destination);
+      osc.start(now + offset);
+      osc.stop(now + offset + spec.duration + 0.02);
+    }
+  }, [enabled]);
+}
+
+/* ========================================================================== *
+ *  6. COMPONENTES
+ * ========================================================================== */
+
+/**
+ * Anfitrión para un icono de Lucide. El <span> lo controla React (sin hijos en
+ * JSX) y el <svg> se inserta de forma imperativa, así React nunca pelea con el
+ * nodo que genera `lucide.createIcons`.
+ */
+function Icon({ name, className = '', style }) {
+  const host = useRef(null);
+
+  useEffect(() => {
+    const node = host.current;
+    if (!node || !window.lucide) return;
+    node.innerHTML = '';
+    const placeholder = document.createElement('i');
+    placeholder.setAttribute('data-lucide', name);
+    node.appendChild(placeholder);
+    window.lucide.createIcons({ nameAttr: 'data-lucide', attrs: { 'stroke-width': 2.2 } });
+  }, [name]);
+
+  return <span ref={host} className={`ic ${className}`} style={style} aria-hidden="true" />;
+}
+
+function StatusBadge({ status }) {
+  const meta = STATUS_META[status];
+  return (
+    <span className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wider ${meta.tone} ${status === 'survival' ? 'animate-pulse-danger' : ''}`}>
+      <Icon name={meta.icon} className="text-[14px]" />
+      {meta.label}
+    </span>
+  );
+}
+
+/** Interpola un número hasta su valor nuevo en vez de saltar. */
+function useTween(target, duration = 600) {
+  const [display, setDisplay] = useState(target);
+  const current = useRef(target);
+  const frame = useRef(0);
+
+  useEffect(() => {
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const from = current.current;
+
+    if (reduce || from === target) {
+      current.current = target;
+      setDisplay(target);
+      return undefined;
+    }
+
+    const t0 = performance.now();
+    cancelAnimationFrame(frame.current);
+
+    const step = (now) => {
+      const p = Math.min(1, (now - t0) / duration);
+      const eased = 1 - Math.pow(1 - p, 3); // easeOutCubic
+      const value = from + (target - from) * eased;
+      current.current = value;
+      setDisplay(value);
+      if (p < 1) frame.current = requestAnimationFrame(step);
+      else { current.current = target; setDisplay(target); }
+    };
+
+    frame.current = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(frame.current);
+  }, [target, duration]);
+
+  return display;
+}
+
+const GAUGE_SIZE = 260;
+const GAUGE_STROKE = 16;
+const GAUGE_RADIUS = (GAUGE_SIZE - GAUGE_STROKE) / 2;
+const CIRCUMFERENCE = 2 * Math.PI * GAUGE_RADIUS;
+
+/**
+ * Elemento héroe: anillo SVG reactivo con el cupo disponible del día. El arco
+ * representa la fracción del cupo que aún NO se gasta, así que se ve vaciarse
+ * conforme avanza el día.
+ */
+function DailyBurnGauge({ snapshot }) {
+  const meta = STATUS_META[snapshot.status];
+  const { isSurvivalMode, availableRatio, availableToday, dailyAllowance, spentToday, currencySymbol } = snapshot;
+
+  const ratio = isSurvivalMode ? 0 : availableRatio;
+  const offset = CIRCUMFERENCE * (1 - ratio);
+  const tweened = useTween(isSurvivalMode ? 0 : availableToday);
+
+  return (
+    <div className="flex flex-col items-center">
+      <div className="relative" style={{ width: GAUGE_SIZE, height: GAUGE_SIZE }}>
+        <svg width={GAUGE_SIZE} height={GAUGE_SIZE} viewBox={`0 0 ${GAUGE_SIZE} ${GAUGE_SIZE}`} className="-rotate-90" aria-hidden="true">
+          <defs>
+            <filter id="gauge-glow" x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="5" result="blur" />
+              <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+            </filter>
+          </defs>
+
+          <circle cx={GAUGE_SIZE / 2} cy={GAUGE_SIZE / 2} r={GAUGE_RADIUS} fill="none" stroke="#27272a" strokeWidth={GAUGE_STROKE} />
+
+          <circle
+            className="gauge-arc"
+            cx={GAUGE_SIZE / 2} cy={GAUGE_SIZE / 2} r={GAUGE_RADIUS}
+            fill="none" stroke={meta.ring} strokeWidth={GAUGE_STROKE} strokeLinecap="round"
+            strokeDasharray={CIRCUMFERENCE}
+            style={{ strokeDashoffset: offset }}
+            filter="url(#gauge-glow)"
+          />
+        </svg>
+
+        <div className="absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
+          {isSurvivalMode ? (
+            <React.Fragment>
+              <Icon name="skull" className="mb-2 text-[32px] text-rose-500" />
+              <span className="text-5xl font-bold tabular-nums tracking-tight text-rose-400">
+                {formatCurrency(0, currencySymbol)}
+              </span>
+              <span className="mt-1 text-xs font-semibold uppercase tracking-[0.2em] text-rose-400/80">
+                Modo supervivencia
+              </span>
+            </React.Fragment>
+          ) : (
+            <React.Fragment>
+              <span className={`text-[2.75rem] font-bold leading-none tracking-tight tabular-nums ${availableToday > 0 ? 'text-zinc-50' : 'text-rose-400'}`}>
+                {formatCurrency(tweened, currencySymbol)}
+              </span>
+              <span className="mt-2 text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-500">
+                Disponible para hoy
+              </span>
+              <span className="mt-1 text-xs text-zinc-600">
+                de {formatCurrency(dailyAllowance, currencySymbol)}
+              </span>
+            </React.Fragment>
+          )}
+        </div>
+      </div>
+
+      {/* Gastado hoy vs cupo máximo del día */}
+      <div className="mt-5 w-full max-w-[280px] space-y-2">
+        <div className="flex items-baseline justify-between text-xs">
+          <span className="flex items-center gap-1.5 text-zinc-500">
+            <Icon name="flame" className="text-[14px]" />
+            Gastado hoy
+          </span>
+          <span className="font-semibold tabular-nums text-zinc-300">
+            {formatCurrency(spentToday, currencySymbol)}
+            <span className="text-zinc-600"> / {formatCurrency(dailyAllowance, currencySymbol)}</span>
+          </span>
+        </div>
+
+        <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-800" role="progressbar"
+             aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(snapshot.usedRatio * 100)}>
+          <div className={`bar-fill h-full rounded-full ${meta.bar}`} style={{ width: `${snapshot.usedRatio * 100}%` }} />
+        </div>
+
+        {snapshot.overspentToday > 0 ? (
+          <p className="text-center text-xs font-medium text-rose-400">
+            Te pasaste {formatCurrency(snapshot.overspentToday, currencySymbol)} del cupo de hoy
+          </p>
+        ) : snapshot.surplus.daysToSpread > 0 ? (
+          <p className="text-center text-xs text-zinc-500">
+            Si cierras así,{' '}
+            <span className={`font-semibold ${snapshot.surplus.perDayDelta >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {formatSigned(snapshot.surplus.perDayDelta, currencySymbol)}
+            </span>{' '}
+            por día para los {snapshot.surplus.daysToSpread} que faltan
+          </p>
+        ) : (
+          <p className="text-center text-xs text-zinc-500">Último día del ciclo</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Los dos gastos de un toque que el usuario repite semana con semana. */
+const QUICK_ACTIONS = [
+  { amount: 35,  label: 'Comida calle', category: 'comida',      icon: 'coffee', accent: 'text-emerald-400' },
+  { amount: 150, label: 'Gasolina',     category: 'combustible', icon: 'fuel',   accent: 'text-sky-400' },
+];
+
+function QuickExpenseBar({ currencySymbol, onQuickExpense, disabled }) {
+  return (
+    <div className="grid grid-cols-2 gap-2.5">
+      {QUICK_ACTIONS.map((action) => (
+        <button
+          key={action.label}
+          type="button"
+          disabled={disabled}
+          onClick={() => onQuickExpense(action)}
+          className="group flex flex-col items-start gap-1 rounded-2xl border border-zinc-800 bg-zinc-900/70 p-3.5 text-left transition-all hover:border-zinc-700 hover:bg-zinc-800/70 active:scale-[0.97] disabled:pointer-events-none disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-600"
+        >
+          <span className="flex w-full items-center justify-between">
+            <Icon name={action.icon} className={`text-[16px] ${action.accent}`} />
+            <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-600">1 toque</span>
+          </span>
+          <span className="text-xl font-bold tabular-nums tracking-tight text-zinc-50">
+            +{formatCompact(action.amount, currencySymbol)}
+          </span>
+          <span className="text-xs text-zinc-500">{action.label}</span>
+          {action.category === 'combustible' ? (
+            <span className="mt-0.5 text-[10px] font-medium text-sky-400/80">Sale de la reserva</span>
+          ) : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+const SEGMENTS = 12;
+
+/**
+ * Medidor del tanque presupuestal. Se dibuja por segmentos (no como barra
+ * continua) para que se lea como el indicador de gasolina de un tablero.
+ */
+function GasReserveCard({ gas, currencySymbol }) {
+  const remainingRatio = gas.reserve > 0 ? gas.remaining / gas.reserve : 0;
+  const litSegments = Math.ceil(remainingRatio * SEGMENTS);
+  const isLow = remainingRatio <= 0.25;
+  const isEmpty = gas.remaining <= 0;
+
+  return (
+    <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4 shadow-lg shadow-black/20">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${isEmpty ? 'bg-rose-500/15 text-rose-400' : 'bg-sky-500/15 text-sky-400'}`}>
+            <Icon name="fuel" className="text-[16px]" />
+          </span>
+          <div>
+            <p className="text-xs font-medium uppercase tracking-widest text-zinc-500">Combustible apartado</p>
+            <p className={`text-lg font-bold tabular-nums tracking-tight ${isEmpty ? 'text-rose-400' : isLow ? 'text-amber-400' : 'text-zinc-50'}`}>
+              {formatCurrency(gas.remaining, currencySymbol)}
+              <span className="ml-1 text-xs font-normal text-zinc-600">de {formatCurrency(gas.reserve, currencySymbol)}</span>
+            </p>
+          </div>
+        </div>
+        <span className="text-right text-[11px] leading-tight text-zinc-600">
+          {formatCurrency(gas.spent, currencySymbol)}<br />cargados
+        </span>
+      </div>
+
+      <div className="mt-3.5 flex items-center gap-1" aria-hidden="true">
+        {Array.from({ length: SEGMENTS }, (_, index) => (
+          <span key={index} className={`seg h-2.5 flex-1 rounded-sm ${index < litSegments ? (isLow ? 'bg-amber-400' : 'bg-sky-400') : 'bg-zinc-800'}`} />
+        ))}
+      </div>
+
+      {gas.overflow > 0 ? (
+        <p className="mt-3 text-xs font-medium text-rose-400">
+          Reserva agotada: {formatCurrency(gas.overflow, currencySymbol)} de gasolina ya están comiéndose tu cupo de comida.
+        </p>
+      ) : isLow ? (
+        <p className="mt-3 text-xs text-amber-400/90">
+          Queda poco tanque presupuestal. Lo que cargues de más saldrá del cupo diario.
+        </p>
+      ) : (
+        <p className="mt-3 text-xs text-zinc-600">
+          Este dinero está blindado: cargar gasolina no baja tu cupo de comida.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function SprintDayDots({ days, idealDailyBurn, currencySymbol }) {
+  const toneFor = (day) => {
+    if (day.isToday) return 'border-zinc-100 bg-zinc-100 text-zinc-900';
+    if (day.isFuture) return 'border-zinc-800 bg-zinc-900 text-zinc-700';
+    if (day.spent === 0) return 'border-zinc-700 bg-zinc-900 text-zinc-500';
+    if (idealDailyBurn <= 0) return 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300';
+    const ratio = day.spent / idealDailyBurn;
+    if (ratio <= 0.85) return 'border-emerald-500/40 bg-emerald-500/15 text-emerald-300';
+    if (ratio <= 1.1) return 'border-amber-400/40 bg-amber-400/15 text-amber-300';
+    return 'border-rose-500/40 bg-rose-500/15 text-rose-300';
+  };
+
+  return (
+    <div className="flex items-start justify-between gap-1">
+      {days.map((day) => (
+        <div key={day.dateKey} className="flex flex-1 flex-col items-center gap-1.5">
+          <div
+            className={`flex h-9 w-9 items-center justify-center rounded-full border text-xs font-bold ${toneFor(day)} ${day.isToday ? 'ring-2 ring-zinc-100/20 ring-offset-2 ring-offset-zinc-950' : ''}`}
+            title={`Día ${day.day}: ${formatCompact(day.spent, currencySymbol)}`}
+          >
+            {DAY_INITIAL.format(day.date).toUpperCase()}
+          </div>
+          <span className={`text-[10px] tabular-nums leading-none ${day.isFuture ? 'text-zinc-700' : day.isToday ? 'text-zinc-300' : 'text-zinc-600'}`}>
+            {day.isFuture ? '—' : formatCompact(day.spent, currencySymbol)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SurvivalPanel({ currencySymbol }) {
+  return (
+    <section className="mt-6">
+      <div className="rounded-2xl border border-rose-500/30 bg-rose-950/30 p-4">
+        <h2 className="text-xs font-semibold uppercase tracking-widest text-rose-300">Modo supervivencia</h2>
+        <p className="mt-1.5 text-sm text-rose-100/80">
+          Agotaste el presupuesto antes de cerrar la semana. Estas comidas te sacan del hoyo sin endeudarte.
+        </p>
+        <ul className="mt-3.5 space-y-1.5">
+          {SURVIVAL_MEALS.map((meal) => (
+            <li key={meal.name} className="flex items-start justify-between gap-3 rounded-xl border border-rose-500/15 bg-rose-500/5 px-3 py-2.5">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-rose-50">{meal.name}</p>
+                <p className="mt-0.5 text-[11px] leading-snug text-rose-200/50">{meal.hint}</p>
+              </div>
+              <span className="shrink-0 text-sm font-bold tabular-nums text-rose-300">
+                {formatCurrency(meal.cost, currencySymbol)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </section>
+  );
+}
+
+/* ========================================================================== *
+ *  7. APP
+ * ========================================================================== */
+
+function App() {
+  const [state, setState] = useState(loadState);
+  const [now, setNow] = useState(() => new Date());
+  const [soundOn, setSoundOn] = useState(true);
+  const play = useHapticSound(soundOn);
+
+  // El cupo depende de la fecha: la vista se refresca sola al cruzar la
+  // medianoche y al volver a la pestaña, sin recargar.
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 60000);
+    const onFocus = () => setNow(new Date());
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onFocus);
+    return () => {
+      window.clearInterval(id);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onFocus);
+    };
+  }, []);
+
+  useEffect(() => { saveState(state); }, [state]);
+
+  const snapshot = useMemo(
+    () => calculateBudget({ cycle: state.cycle, transactions: state.transactions, referenceDate: now }),
+    [state, now],
+  );
+
+  const dailyUsage = useMemo(
+    () => getDailyUsage({ cycle: state.cycle, transactions: state.transactions, referenceDate: now }),
+    [state, now],
+  );
+
+  const todayTransactions = useMemo(() => {
+    const key = toDateKey(startOfLocalDay(now));
+    return state.transactions
+      .filter((tx) => String(tx.date).slice(0, 10) === key)
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  }, [state.transactions, now]);
+
+  /** Elige el tono a partir del estado que deja el gasto. */
+  const toneFor = useCallback((projected, category) => {
+    if (category === 'combustible') return projected.gas.overflow > 0 ? 'warning' : 'gas';
+    if (projected.isSurvivalMode || projected.overspentToday > 0) return 'error';
+    if (projected.status === 'critical') return 'warning';
+    return 'success';
+  }, []);
+
+  const addExpense = useCallback((action) => {
+    setState((previous) => {
+      const transaction = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        amount: action.amount,
+        category: action.category,
+        note: action.label,
+        date: new Date().toISOString(),
+      };
+      const next = { ...previous, transactions: [...previous.transactions, transaction] };
+
+      // Proyecta el resultado para elegir el feedback sin esperar al render.
+      const projected = calculateBudget({ cycle: next.cycle, transactions: next.transactions, referenceDate: new Date() });
+      play(toneFor(projected, action.category));
+
+      return next;
+    });
+  }, [play, toneFor]);
+
+  const removeExpense = useCallback((id) => {
+    play('tap');
+    setState((previous) => ({ ...previous, transactions: previous.transactions.filter((tx) => tx.id !== id) }));
+  }, [play]);
+
+  const reset = useCallback(() => {
+    play('warning');
+    setState(createDefaultState());
+  }, [play]);
+
+  const updateCycle = useCallback((patch) => {
+    setState((previous) => ({ ...previous, cycle: { ...previous.cycle, ...patch } }));
+  }, []);
+
+  const { progress, isSurvivalMode, currencySymbol } = snapshot;
+  const daysLeftLabel = progress.isLastDay
+    ? 'Último día'
+    : `Faltan ${progress.daysRemaining - 1} ${progress.daysRemaining - 1 === 1 ? 'día' : 'días'}`;
+
+  return (
+    <main className={`mx-auto min-h-[100dvh] w-full max-w-md px-4 pb-10 ${isSurvivalMode ? 'survival-backdrop' : ''}`}>
+      <header className="flex items-start justify-between gap-3 pb-4 pt-5">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-zinc-300">
+            Día {progress.dayIndex} de {progress.totalDays}
+            <span className="mx-1.5 text-zinc-700">•</span>
+            <span className="font-normal text-zinc-500">{daysLeftLabel}</span>
+          </p>
+          <p className="mt-0.5 text-xs text-zinc-600 first-letter:uppercase">{LONG_DATE.format(now)}</p>
+        </div>
+        <StatusBadge status={snapshot.status} />
+      </header>
+
+      <DailyBurnGauge snapshot={snapshot} />
+
+      <section className="mt-7">
+        <h2 className="mb-2.5 text-xs font-medium uppercase tracking-widest text-zinc-500">Sprint de la semana</h2>
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-3.5 shadow-lg shadow-black/20">
+          <SprintDayDots days={dailyUsage} idealDailyBurn={snapshot.idealDailyBurn} currencySymbol={currencySymbol} />
+        </div>
+      </section>
+
+      {isSurvivalMode ? <SurvivalPanel currencySymbol={currencySymbol} /> : null}
+
+      <section className="mt-6">
+        <h2 className="mb-2.5 text-xs font-medium uppercase tracking-widest text-zinc-500">Registro inmediato</h2>
+        <QuickExpenseBar currencySymbol={currencySymbol} onQuickExpense={addExpense} disabled={progress.isFinished} />
+      </section>
+
+      <section className="mt-6">
+        <GasReserveCard gas={snapshot.gas} currencySymbol={currencySymbol} />
+      </section>
+
+      <section className="mt-6">
+        <h2 className="mb-2.5 text-xs font-medium uppercase tracking-widest text-zinc-500">Movimientos de hoy</h2>
+        {todayTransactions.length === 0 ? (
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-5 text-center shadow-lg shadow-black/20">
+            <p className="text-sm text-zinc-500">Todavía no gastas nada hoy.</p>
+            <p className="mt-1 text-xs text-zinc-700">Cada peso que no gastes sube el cupo de los días que faltan.</p>
+          </div>
+        ) : (
+          <ul className="space-y-2">
+            {todayTransactions.map((tx) => (
+              <li key={tx.id} className="flex items-center justify-between gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/70 p-3 shadow-lg shadow-black/20">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-zinc-200">{tx.note || CATEGORY_LABELS[tx.category]}</p>
+                  <p className="mt-0.5 text-[11px] text-zinc-600">
+                    {CATEGORY_LABELS[tx.category]}<span className="mx-1">·</span>{TIME.format(parseTimestamp(tx.date))}
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  <span className={`text-sm font-bold tabular-nums ${tx.category === 'combustible' ? 'text-sky-400' : 'text-zinc-200'}`}>
+                    −{formatCurrency(tx.amount, currencySymbol)}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label="Eliminar gasto"
+                    onClick={() => removeExpense(tx.id)}
+                    className="rounded-lg p-1.5 text-zinc-700 transition-colors hover:bg-zinc-800 hover:text-rose-400"
+                  >
+                    <Icon name="trash-2" className="text-[14px]" />
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {/* Controles del preview: sin esto no se puede volver a probar. */}
+      <section className="mt-6">
+        <h2 className="mb-2.5 text-xs font-medium uppercase tracking-widest text-zinc-500">Parámetros del ciclo</h2>
+        <div className="space-y-3 rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4 shadow-lg shadow-black/20">
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block">
+              <span className="text-[10px] font-medium uppercase tracking-widest text-zinc-500">Ingreso semanal</span>
+              <input
+                type="number" inputMode="decimal" min="0" step="50"
+                value={state.cycle.totalIncome}
+                onChange={(event) => updateCycle({ totalIncome: Math.max(0, safeNumber(event.target.value)) })}
+                className="mt-1 h-11 w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 text-base tabular-nums text-zinc-100 focus:border-zinc-600 focus:outline-none"
+              />
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-medium uppercase tracking-widest text-zinc-500">Reserva gasolina</span>
+              <input
+                type="number" inputMode="decimal" min="0" step="50"
+                value={state.cycle.gasReserve}
+                onChange={(event) => updateCycle({ gasReserve: Math.max(0, safeNumber(event.target.value)) })}
+                className="mt-1 h-11 w-full rounded-xl border border-zinc-800 bg-zinc-950 px-3 text-base tabular-nums text-zinc-100 focus:border-zinc-600 focus:outline-none"
+              />
+            </label>
+          </div>
+
+          <div className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-950/60 px-3.5 py-3">
+            <span className="text-xs font-medium uppercase tracking-widest text-zinc-500">Presupuesto operativo</span>
+            <span className="text-sm font-bold tabular-nums text-emerald-400">
+              {formatCurrency(snapshot.operatingBudget, currencySymbol)}
+            </span>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => { setSoundOn((value) => !value); play('tap'); }}
+              className="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-800 active:scale-[0.97]"
+            >
+              <Icon name={soundOn ? 'volume-2' : 'volume-x'} className="text-[16px]" />
+              {soundOn ? 'Sonido activo' : 'Sonido apagado'}
+            </button>
+            <button
+              type="button"
+              onClick={reset}
+              className="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 text-xs font-semibold text-rose-300 transition-colors hover:bg-rose-500/20 active:scale-[0.97]"
+            >
+              <Icon name="rotate-ccw" className="text-[16px]" />
+              Reiniciar semana
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <p className="mt-6 text-center text-[11px] leading-relaxed text-zinc-700">
+        Preview autocontenido de WeeklyBurn. Los datos se guardan en
+        <span className="text-zinc-600"> localStorage </span>
+        de este navegador; la app real usa IndexedDB vía Dexie.
+      </p>
+    </main>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
