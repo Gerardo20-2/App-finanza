@@ -1,0 +1,89 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Dark mode nativo: la app no tiene tema claro por diseño. */
+    --background: 240 10% 3.9%; /* zinc-950 #09090b */
+    --foreground: 0 0% 98%;
+    --card: 240 6% 10%; /* zinc-900 */
+    --card-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 6% 10%;
+    --secondary: 240 4% 16%; /* zinc-800 */
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 4% 16%;
+    --muted-foreground: 240 5% 65%;
+    --accent: 160 84% 39%; /* emerald-500 */
+    --accent-foreground: 0 0% 98%;
+    --destructive: 350 89% 60%; /* rose-500 */
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 4% 16%;
+    --input: 240 4% 16%;
+    --ring: 240 5% 34%;
+    --radius: 0.75rem;
+
+    --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+      'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+
+    color-scheme: dark;
+  }
+
+  * {
+    @apply border-zinc-800;
+  }
+
+  html {
+    /* Evita el rebote elástico que delata que es una web y no una app. */
+    overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-zinc-950 text-zinc-100 antialiased;
+    font-family: var(--font-sans);
+    /* La UI es táctil: seleccionar texto sólo estorba. */
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* Los campos de texto sí deben permitir selección. */
+  input,
+  textarea {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  /* iOS hace zoom si la fuente del input mide menos de 16px. */
+  input[type='text'],
+  input[type='number'],
+  input:not([type]) {
+    font-size: 16px;
+  }
+}
+
+@layer utilities {
+  .pb-safe {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+
+  .pt-safe {
+    padding-top: max(1rem, env(safe-area-inset-top));
+  }
+
+  /* Fondo carmesí del Modo Supervivencia. */
+  .survival-backdrop {
+    background:
+      radial-gradient(ellipse 90% 55% at 50% 0%, rgba(159, 18, 57, 0.35), transparent 70%),
+      #0c0508;
+  }
+
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}

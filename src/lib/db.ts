@@ -89,7 +89,22 @@ export const db = new WeeklyBurnDB();
 /*                                 Settings                                   */
 /* -------------------------------------------------------------------------- */
 
-export async function getSettings(): Promise<UserSettings> {
+/**
+ * Lectura pura de los ajustes, rellenando con los valores por defecto lo que
+ * falte. NO escribe.
+ *
+ * Importante: `useLiveQuery` de Dexie ejecuta su consulta dentro de una
+ * transacción de SOLO LECTURA, así que cualquier `put` aquí haría reventar el
+ * hook con un `DexieError`. Sembrar es responsabilidad de `ensureSettings`,
+ * que se llama una sola vez al montar la app.
+ */
+export async function readSettings(): Promise<UserSettings> {
+  const stored = await db.settings.get(SETTINGS_ID);
+  return { id: SETTINGS_ID, ...DEFAULT_SETTINGS, ...(stored ?? {}) };
+}
+
+/** Siembra los ajustes por defecto si es la primera vez que se abre la app. */
+export async function ensureSettings(): Promise<UserSettings> {
   const stored = await db.settings.get(SETTINGS_ID);
   if (stored) return { ...DEFAULT_SETTINGS, ...stored };
 
@@ -99,7 +114,7 @@ export async function getSettings(): Promise<UserSettings> {
 }
 
 export async function saveSettings(patch: Partial<Omit<UserSettings, 'id'>>): Promise<void> {
-  const current = await getSettings();
+  const current = await readSettings();
   await db.settings.put({ ...current, ...patch, id: SETTINGS_ID });
 }
 
@@ -147,7 +162,7 @@ export interface StartCycleInput {
  * siempre queda exactamente un ciclo `active`.
  */
 export async function startNewCycle(input: StartCycleInput = {}): Promise<number> {
-  const settings = await getSettings();
+  const settings = await readSettings();
   const reference = input.reference ?? new Date();
   const range = resolveCycleRange(settings.cycleStartDay, reference);
 
@@ -177,7 +192,10 @@ export async function startNewCycle(input: StartCycleInput = {}): Promise<number
   });
 }
 
-/** Devuelve el ciclo activo, creando uno con los valores por defecto si falta. */
+/**
+ * Devuelve el ciclo activo, creando uno con los valores por defecto si falta.
+ * Escribe, así que nunca debe invocarse desde un `useLiveQuery`.
+ */
 export async function ensureActiveCycle(reference: Date = new Date()): Promise<WeeklyCycle> {
   const existing = await getActiveCycle();
   if (existing) return existing;
@@ -186,6 +204,12 @@ export async function ensureActiveCycle(reference: Date = new Date()): Promise<W
   const created = await db.cycles.get(id);
   if (!created) throw new Error('No se pudo crear el ciclo semanal.');
   return created;
+}
+
+/** Siembra ajustes + primer ciclo. Se llama una vez al montar la app. */
+export async function bootstrap(reference: Date = new Date()): Promise<void> {
+  await ensureSettings();
+  await ensureActiveCycle(reference);
 }
 
 export async function updateCycle(

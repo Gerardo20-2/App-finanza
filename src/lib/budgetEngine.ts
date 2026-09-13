@@ -588,10 +588,24 @@ export const CATEGORY_LABELS: Record<ExpenseCategory, string> = {
   urgencia: 'Urgencia',
 };
 
+/**
+ * Paleta categórica de las gráficas, validada contra superficie oscura:
+ * banda de luminosidad, piso de croma, separación CVD en todos los pares y
+ * contraste >= 3:1. No reordenar ni reciclar: el color sigue a la categoría,
+ * nunca a su posición en el ranking.
+ */
 export const CATEGORY_COLORS: Record<ExpenseCategory, string> = {
-  comida: '#34d399',
-  combustible: '#38bdf8',
-  super: '#a78bfa',
-  gustos: '#fbbf24',
-  urgencia: '#f43f5e',
+  comida: '#047857',
+  combustible: '#0284c7',
+  super: '#7c3aed',
+  gustos: '#d97706',
+  urgencia: '#e11d48',
 };
+
+/** Serie real vs. línea de referencia ideal del gráfico de quema. */
+export const CHART_COLORS = {
+  actual: '#10b981',
+  ideal: '#71717a',
+  grid: '#27272a',
+  axis: '#52525b',
+} as const;
