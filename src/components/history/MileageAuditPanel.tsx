@@ -6,57 +6,45 @@ import { AlertTriangle, ChevronDown, Gauge } from 'lucide-react';
 
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { EMPTY_DAILY_LOG, saveDailyLog, type DailyLog, type DailyLogFields } from '@/lib/db';
-import { computeMileageAudit, parseHours, parseNonNegative } from '@/lib/mileageAudit';
+import { readDailyLogFields, saveDailyLog, type DailyLog, type DailyLogFields } from '@/lib/db';
+import {
+  calcDailyMetrics,
+  dayDataFromCapture,
+  parseDurationMinutes,
+  parseTripCount,
+} from '@/lib/operationalAnalytics';
 import { cn, formatCurrency } from '@/lib/utils';
+
+import { formatHours, formatKm, formatMoney, formatRatio } from './format';
 
 /** Espera tras la última tecla antes de escribir en IndexedDB. */
 const SAVE_DELAY_MS = 350;
-
-const kmFormatter = new Intl.NumberFormat('es-MX', { maximumFractionDigits: 1 });
-const pctFormatter = new Intl.NumberFormat('es-MX', { maximumFractionDigits: 1 });
-
-function formatKm(value: number | null): string {
-  return value === null ? '—' : `${kmFormatter.format(value)} km`;
-}
-
-function formatPct(value: number | null): string {
-  return value === null ? '—' : `${pctFormatter.format(value)}%`;
-}
-
-function formatMoney(value: number | null, symbol: string): string {
-  return value === null ? '—' : formatCurrency(value, symbol);
-}
 
 interface FieldConfig {
   key: keyof DailyLogFields;
   label: string;
   placeholder: string;
-  inputMode: 'decimal' | 'text';
+  inputMode: 'decimal' | 'numeric' | 'text';
+  wide?: boolean;
 }
 
 const FIELDS: FieldConfig[] = [
   { key: 'kmInicio', label: 'Km inicio', placeholder: 'Odómetro al salir', inputMode: 'decimal' },
   { key: 'kmFin', label: 'Km fin', placeholder: 'Odómetro al volver', inputMode: 'decimal' },
-  { key: 'kmDidi', label: 'Km DiDi', placeholder: 'Según la app', inputMode: 'decimal' },
-  { key: 'horasConectado', label: 'Horas conectado', placeholder: '8.5 o 8:30', inputMode: 'text' },
-  { key: 'ingresoDidi', label: 'Ingreso DiDi ($)', placeholder: 'Pago del día', inputMode: 'decimal' },
+  { key: 'kmDidi', label: 'Km DiDi', placeholder: 'Distancia en la app', inputMode: 'decimal' },
+  { key: 'numViajes', label: 'Viajes', placeholder: 'Completados', inputMode: 'numeric' },
+  { key: 'horasConectado', label: 'Tiempo conectado', placeholder: '8:30 o 510 min', inputMode: 'text' },
+  { key: 'tiempoActivo', label: 'Tiempo activo', placeholder: '6:15 o 375 min', inputMode: 'text' },
+  { key: 'ingresoDidi', label: 'Ingreso DiDi ($)', placeholder: 'Pago del día', inputMode: 'decimal', wide: true },
 ];
 
-function toFields(log: DailyLog | undefined): DailyLogFields {
-  if (!log) return { ...EMPTY_DAILY_LOG };
-  return {
-    kmInicio: log.kmInicio,
-    kmFin: log.kmFin,
-    kmDidi: log.kmDidi,
-    horasConectado: log.horasConectado,
-    ingresoDidi: log.ingresoDidi,
-  };
+function isFilled(value: string): boolean {
+  return value.trim() !== '';
 }
 
 /**
- * Detalle de odómetro/km de una tarjeta diaria. Plegado por defecto para no
- * saturar el historial; el resumen de la cabecera deja ver el reparto sin
+ * Detalle de odómetro y tablero DiDi de una tarjeta diaria. Plegado por
+ * defecto para no saturar el historial; la cabecera deja ver el reparto sin
  * abrirlo.
  *
  * La gasolina del día NO se captura aquí: sale de los gastos `combustible`
@@ -77,13 +65,13 @@ export function MileageAuditPanel({
   onToggle?: () => void;
 }) {
   const [isOpen, setOpen] = useState(false);
-  const [draft, setDraft] = useState<DailyLogFields>(() => toFields(log));
+  const [draft, setDraft] = useState<DailyLogFields>(() => readDailyLogFields(log));
 
   // El registro llega de IndexedDB después del primer render: se hidrata una
   // sola vez y, si el usuario ya empezó a escribir, su borrador manda.
   const isDirty = useRef(false);
   useEffect(() => {
-    if (!isDirty.current) setDraft(toFields(log));
+    if (!isDirty.current) setDraft(readDailyLogFields(log));
   }, [log]);
 
   const pending = useRef<Partial<DailyLogFields>>({});
@@ -109,29 +97,37 @@ export function MileageAuditPanel({
     timer.current = window.setTimeout(flush, SAVE_DELAY_MS);
   };
 
-  const hoursParsed = parseHours(draft.horasConectado);
-  const hoursInvalid = draft.horasConectado.trim() !== '' && hoursParsed === null;
-
-  const audit = useMemo(
-    () =>
-      computeMileageAudit({
-        kmInicio: parseNonNegative(draft.kmInicio),
-        kmFin: parseNonNegative(draft.kmFin),
-        kmDidi: parseNonNegative(draft.kmDidi),
-        horasConectado: hoursParsed,
-        gasolinaTotal,
-        ingresoDidi: parseNonNegative(draft.ingresoDidi),
-      }),
-    [draft, hoursParsed, gasolinaTotal],
+  const metrics = useMemo(
+    () => calcDailyMetrics(dayDataFromCapture(dateKey, draft, gasolinaTotal)),
+    [dateKey, draft, gasolinaTotal],
   );
 
+  const conectadoInvalid =
+    isFilled(draft.horasConectado) && parseDurationMinutes(draft.horasConectado) === null;
+  const activoInvalid =
+    isFilled(draft.tiempoActivo) && parseDurationMinutes(draft.tiempoActivo) === null;
+  const viajesInvalid = isFilled(draft.numViajes) && parseTripCount(draft.numViajes) === null;
+
   const invalidFields: Partial<Record<keyof DailyLogFields, boolean>> = {
-    kmFin: audit.odometroInvalido,
-    kmDidi: audit.didiExcedeTotal,
-    horasConectado: hoursInvalid,
+    kmFin: metrics.odometroInvalido,
+    kmDidi: metrics.didiExcedeTotal,
+    horasConectado: conectadoInvalid,
+    tiempoActivo: activoInvalid || metrics.activoExcedeConectado,
+    numViajes: viajesInvalid,
   };
-  const hasWarning = audit.odometroInvalido || audit.didiExcedeTotal || hoursInvalid;
-  const hasData = Object.values(draft).some((value) => value.trim() !== '');
+
+  const warnings = [
+    metrics.odometroInvalido && 'El km final es menor que el inicial.',
+    metrics.didiExcedeTotal &&
+      `Los km de DiDi superan los ${formatKm(metrics.kmTotal)} que recorriste.`,
+    (conectadoInvalid || activoInvalid) && 'Escribe los tiempos como 8:30, 8 h 30 min o 510 min.',
+    metrics.activoExcedeConectado && 'El tiempo activo no puede superar al tiempo conectado.',
+    viajesInvalid && 'Los viajes deben ser un número entero.',
+  ].filter((item): item is string => typeof item === 'string');
+
+  const hasWarning = warnings.length > 0;
+  const hasData = Object.values(draft).some(isFilled);
+  const isSplit = metrics.etaKm !== null;
 
   const panelId = `mileage-${dateKey}`;
 
@@ -160,9 +156,9 @@ export function MileageAuditPanel({
         <span className="flex shrink-0 items-center gap-2">
           {hasWarning ? (
             <AlertTriangle className="h-3.5 w-3.5 text-rose-400" strokeWidth={2.3} />
-          ) : audit.isComplete ? (
+          ) : isSplit ? (
             <span className="text-[11px] font-semibold tabular-nums text-emerald-400">
-              {formatPct(audit.pctDidi)} DiDi
+              {formatRatio(metrics.etaKm)} DiDi
             </span>
           ) : hasData ? null : (
             <span className="text-[11px] text-zinc-600">Sin capturar</span>
@@ -189,10 +185,7 @@ export function MileageAuditPanel({
                   const id = `${panelId}-${field.key}`;
                   const invalid = invalidFields[field.key] ?? false;
                   return (
-                    <div
-                      key={field.key}
-                      className={cn('space-y-1', field.key === 'ingresoDidi' && 'col-span-2')}
-                    >
+                    <div key={field.key} className={cn('space-y-1', field.wide && 'col-span-2')}>
                       <Label htmlFor={id} className="text-[10px]">
                         {field.label}
                       </Label>
@@ -222,24 +215,12 @@ export function MileageAuditPanel({
                   role="alert"
                   className="space-y-1 rounded-xl border border-rose-500/30 bg-rose-500/10 p-2.5 text-xs text-rose-300"
                 >
-                  {audit.odometroInvalido ? (
-                    <li className="flex items-start gap-1.5">
+                  {warnings.map((warning) => (
+                    <li key={warning} className="flex items-start gap-1.5">
                       <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" strokeWidth={2.5} />
-                      El km final es menor que el inicial.
+                      {warning}
                     </li>
-                  ) : null}
-                  {audit.didiExcedeTotal ? (
-                    <li className="flex items-start gap-1.5">
-                      <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" strokeWidth={2.5} />
-                      Los km de DiDi superan los {formatKm(audit.kmTotales)} que recorriste.
-                    </li>
-                  ) : null}
-                  {hoursInvalid ? (
-                    <li className="flex items-start gap-1.5">
-                      <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" strokeWidth={2.5} />
-                      Escribe las horas como 8.5 o 8:30.
-                    </li>
-                  ) : null}
+                  ))}
                 </ul>
               ) : null}
 
@@ -247,7 +228,7 @@ export function MileageAuditPanel({
                 <span className="text-zinc-500">
                   Recorrido total{' '}
                   <span className="font-semibold tabular-nums text-zinc-200">
-                    {formatKm(audit.kmTotales)}
+                    {formatKm(metrics.kmTotal)}
                   </span>
                 </span>
                 <span className="text-zinc-500">
@@ -258,23 +239,23 @@ export function MileageAuditPanel({
                 </span>
               </div>
 
-              {audit.isComplete ? (
+              {isSplit ? (
                 <>
                   <div
                     className="flex h-1.5 overflow-hidden rounded-full bg-zinc-800"
                     aria-hidden="true"
                   >
-                    <div className="bg-emerald-500" style={{ width: `${audit.pctDidi ?? 0}%` }} />
-                    <div className="bg-amber-400" style={{ width: `${audit.pctPersonal ?? 0}%` }} />
+                    <div className="bg-emerald-500" style={{ width: `${(metrics.etaKm ?? 0) * 100}%` }} />
+                    <div className="flex-1 bg-amber-400" />
                   </div>
 
                   <div className="space-y-1.5">
                     <p className="rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-2.5 py-2 text-xs text-emerald-200">
                       <span className="font-semibold">Uso DiDi:</span>{' '}
                       <span className="tabular-nums">
-                        {formatKm(audit.kmDidi)} ({formatPct(audit.pctDidi)}) →{' '}
+                        {formatKm(metrics.kmDidi)} ({formatRatio(metrics.etaKm)}) →{' '}
                         <span className="font-semibold">
-                          {formatMoney(audit.gasolinaDidi, currencySymbol)}
+                          {formatMoney(metrics.gasDidi, currencySymbol)}
                         </span>{' '}
                         de tu gasolina
                       </span>
@@ -282,9 +263,10 @@ export function MileageAuditPanel({
                     <p className="rounded-xl border border-amber-400/25 bg-amber-400/10 px-2.5 py-2 text-xs text-amber-200">
                       <span className="font-semibold">Uso Personal:</span>{' '}
                       <span className="tabular-nums">
-                        {formatKm(audit.kmPersonales)} ({formatPct(audit.pctPersonal)}) →{' '}
+                        {formatKm(metrics.kmMuertos)} (
+                        {formatRatio(metrics.etaKm === null ? null : 1 - metrics.etaKm)}) →{' '}
                         <span className="font-semibold">
-                          {formatMoney(audit.gasolinaPersonal, currencySymbol)}
+                          {formatMoney(metrics.gasPersonal, currencySymbol)}
                         </span>{' '}
                         de tu gasolina
                       </span>
@@ -297,17 +279,61 @@ export function MileageAuditPanel({
                 </p>
               ) : null}
 
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-xl bg-zinc-950/60 p-2.5">
+                  <p className="text-[10px] uppercase tracking-wider text-zinc-600">Ocupación</p>
+                  <p className="mt-0.5 text-sm font-bold tabular-nums text-zinc-200">
+                    {formatRatio(metrics.etaTiempo)}
+                  </p>
+                  <p className="text-[10px] text-zinc-600">tiempo activo / conectado</p>
+                </div>
+                <div className="rounded-xl bg-zinc-950/60 p-2.5">
+                  <p className="text-[10px] uppercase tracking-wider text-zinc-600">Km útiles</p>
+                  <p className="mt-0.5 text-sm font-bold tabular-nums text-zinc-200">
+                    {formatRatio(metrics.etaKm)}
+                  </p>
+                  <p className="text-[10px] text-zinc-600">km DiDi / odómetro</p>
+                </div>
+              </div>
+
               <div className="rounded-xl bg-zinc-950/60 p-2.5">
-                <p className="text-[10px] uppercase tracking-wider text-zinc-600">Rendimiento</p>
+                <div className="flex items-baseline justify-between gap-2">
+                  <p className="text-[10px] uppercase tracking-wider text-zinc-600">Rendimiento neto</p>
+                  <p className="text-[11px] text-zinc-500">
+                    Margen{' '}
+                    <span
+                      className={cn(
+                        'font-semibold tabular-nums',
+                        (metrics.margenNeto ?? 0) < 0 ? 'text-rose-400' : 'text-emerald-400',
+                      )}
+                    >
+                      {formatMoney(metrics.margenNeto, currencySymbol)}
+                    </span>
+                  </p>
+                </div>
                 <p className="mt-0.5 text-sm font-bold tabular-nums text-zinc-200">
-                  {formatMoney(audit.gananciaPorKm, currencySymbol)}/km DiDi
+                  {formatMoney(metrics.rKm, currencySymbol)}/km DiDi
                   <span className="mx-1.5 font-normal text-zinc-700">|</span>
-                  {formatMoney(audit.gananciaPorHora, currencySymbol)}/hr conectado
+                  {formatMoney(metrics.rHora, currencySymbol)}/hr conectado
                 </p>
                 <p className="mt-1 text-[11px] text-zinc-500">
-                  Costo real de gasolina:{' '}
+                  Bruto{' '}
+                  <span className="tabular-nums">
+                    {formatMoney(metrics.brutoKm, currencySymbol)}/km ·{' '}
+                    {formatMoney(metrics.brutoHora, currencySymbol)}/hr
+                  </span>
+                  <span className="mx-1">·</span>
+                  {formatHours(metrics.horasConectado)} conectado
+                </p>
+                <p className="mt-0.5 text-[11px] text-zinc-500">
+                  Ticket promedio{' '}
+                  <span className="font-semibold tabular-nums text-zinc-300">
+                    {formatMoney(metrics.epv, currencySymbol)}
+                  </span>
+                  <span className="mx-1">·</span>
+                  Gasolina real{' '}
                   <span className="font-semibold tabular-nums text-sky-400">
-                    {formatMoney(audit.costoGasolinaPorKm, currencySymbol)}/km
+                    {formatMoney(metrics.costoGasKm, currencySymbol)}/km
                   </span>
                 </p>
               </div>

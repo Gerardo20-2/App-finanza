@@ -40,7 +40,7 @@ export interface Transaction {
  * nada de esto entra al motor financiero ni mueve el cupo o el saldo.
  *
  * Los números se guardan como texto tal cual se capturaron (`'8:30'`,
- * `'45120'`) para no perder lo que el usuario escribió; `mileageAudit.ts` los
+ * `'45120'`) para no perder lo que el usuario escribió; `operationalAnalytics.ts` los
  * interpreta al calcular.
  */
 export interface DailyLog {
@@ -48,8 +48,15 @@ export interface DailyLog {
   kmInicio: string;
   kmFin: string;
   kmDidi: string;
+  /**
+   * Duración total conectado. La llave conserva su nombre original para no
+   * perder lo capturado antes; acepta horas o minutos (ver `parseDurationMinutes`).
+   */
   horasConectado: string;
-  /** Ingreso reportado por DiDi ese día. Sólo alimenta las métricas $/km y $/hr. */
+  /** Tiempo activo en viaje o recogida, según el tablero de DiDi. */
+  tiempoActivo: string;
+  numViajes: string;
+  /** Ingreso reportado por DiDi ese día. Sólo alimenta la analítica operativa. */
   ingresoDidi: string;
   updatedAt: string;
 }
@@ -61,8 +68,26 @@ export const EMPTY_DAILY_LOG: DailyLogFields = {
   kmFin: '',
   kmDidi: '',
   horasConectado: '',
+  tiempoActivo: '',
+  numViajes: '',
   ingresoDidi: '',
 };
+
+/**
+ * Los registros guardados antes de `tiempoActivo`/`numViajes` no traen esos
+ * campos; se rellenan en blanco al leer.
+ */
+export function readDailyLogFields(log: Partial<DailyLog> | undefined): DailyLogFields {
+  return {
+    kmInicio: log?.kmInicio ?? '',
+    kmFin: log?.kmFin ?? '',
+    kmDidi: log?.kmDidi ?? '',
+    horasConectado: log?.horasConectado ?? '',
+    tiempoActivo: log?.tiempoActivo ?? '',
+    numViajes: log?.numViajes ?? '',
+    ingresoDidi: log?.ingresoDidi ?? '',
+  };
+}
 
 export interface UserSettings {
   id?: number;

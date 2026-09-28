@@ -16,7 +16,7 @@ Radix/shadcn · Framer Motion · Recharts · Lucide · date-fns · Web Audio API
 npm install
 npm run dev        # http://localhost:3000
 npm run build      # build de producción
-npm test           # 42 pruebas del motor financiero
+npm test           # pruebas del motor financiero y de la analítica operativa
 npm run typecheck  # tsc --noEmit
 ```
 
@@ -52,6 +52,26 @@ I − (R − G) − F − (V + G)  ≡  I − R − F − V
 — pero deja el presupuesto operativo estable toda la semana en vez de brincar cada vez
 que cargas gasolina. Cargar el tanque nunca baja tu cupo de comida hasta que la reserva
 se agota.
+
+## Analítica operativa DiDi
+
+Cada tarjeta diaria del Historial tiene un "Detalle de odómetro / km" que cruza el
+tablero de DiDi (distancia, tiempo conectado y activo, viajes, ingreso) con el odómetro
+y la gasolina del día (los gastos `combustible`). Nada de esto toca el cupo ni el saldo.
+
+```
+η_km = Km_DiDi ÷ (Km_fin − Km_inicio)        η_t  = T_activo ÷ T_conectado
+G_DiDi = Gasolina · η_km                      MN   = Ingreso − G_DiDi
+R_km = MN ÷ Km_DiDi      R_hr = MN ÷ Horas    EPV  = Ingreso ÷ Viajes
+IRD  = 100 · (0.40·R̂_km + 0.35·R̂_hr + 0.15·η_t + 0.10·η_km)
+```
+
+`R̂` se normaliza contra el mejor día del mes (`valor ÷ máximo`, saturado a 0..1): el
+mejor día vale 1, un día con margen negativo vale 0 y un solo día registrado no divide
+entre cero. El "Tablero de Inteligencia Operativa" muestra el Día Estrella
+(`argmax IRD`), la eficiencia del mes ponderada por volumen, el perfil lunes–domingo y
+el WoW contra **los mismos días** de la semana anterior (cortando en ayer si hoy aún no
+se captura).
 
 ## Arquitectura
 

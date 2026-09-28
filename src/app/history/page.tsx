@@ -6,8 +6,10 @@ import { AnimatePresence, motion, useMotionValue, useTransform } from 'framer-mo
 import { Archive, Trash2 } from 'lucide-react';
 
 import { MileageAuditPanel } from '@/components/history/MileageAuditPanel';
+import { IrdBadge, OperationalDashboard } from '@/components/history/OperationalDashboard';
 import { Card } from '@/components/ui/card';
 import { useHapticSound } from '@/hooks/useHapticSound';
+import { useOperationalAnalytics } from '@/hooks/useOperationalAnalytics';
 import { useWeeklyBudget } from '@/hooks/useWeeklyBudget';
 import {
   calculateBudget,
@@ -137,6 +139,14 @@ export default function HistoryPage() {
 
   const todayKey = toDateKey(now);
 
+  const analytics = useOperationalAnalytics({
+    now,
+    weekStartDay: settings.cycleStartDay,
+    cycleStartDate: cycle?.startDate,
+    cycleEndDate: cycle?.endDate,
+  });
+  const starDateKey = analytics.month.starDay?.metrics.dateKey;
+
   /**
    * Tarjetas diarias del ciclo activo, de la más reciente a la más vieja. Un
    * día aparece si tiene movimientos, si ya tiene auditoría de km, o si es hoy
@@ -204,8 +214,14 @@ export default function HistoryPage() {
               {groupedCurrent.map((group) => (
                 <div key={group.dateKey}>
                   <div className="mb-1.5 flex items-baseline justify-between px-1">
-                    <span className="text-[11px] font-medium text-zinc-500 first-letter:uppercase">
-                      {formatShortDate(parseTimestamp(group.dateKey))}
+                    <span className="flex items-center gap-2">
+                      <span className="text-[11px] font-medium text-zinc-500 first-letter:uppercase">
+                        {formatShortDate(parseTimestamp(group.dateKey))}
+                      </span>
+                      <IrdBadge
+                        ird={analytics.irdByDay.get(group.dateKey)}
+                        isStar={group.dateKey === starDateKey}
+                      />
                     </span>
                     <span className="text-[11px] font-semibold tabular-nums text-zinc-600">
                       {formatCurrency(group.total, settings.currencySymbol)}
@@ -332,6 +348,12 @@ export default function HistoryPage() {
           </ul>
         )}
       </section>
+
+      <OperationalDashboard
+        month={analytics.month}
+        currencySymbol={settings.currencySymbol}
+        onToggle={() => play('tap')}
+      />
     </main>
   );
 }
