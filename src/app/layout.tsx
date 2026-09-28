@@ -2,29 +2,32 @@ import type { Metadata, Viewport } from 'next';
 
 import { BottomNav } from '@/components/shared/BottomNav';
 import { ServiceWorkerProvider } from '@/components/shared/ServiceWorkerProvider';
+import { withBasePath } from '@/lib/basePath';
 
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'WeeklyBurn — Tu cupo real de hoy',
+  title: 'DiDi Analytics & Tracker',
   description:
     'Controla en tiempo real cuánto puedes gastar hoy sin quedarte sin comer ni sin gasolina el fin de semana.',
-  applicationName: 'WeeklyBurn',
-  manifest: '/manifest.json',
+  applicationName: 'DiDiTracker',
+  // Next no antepone `basePath` a estas URLs de metadatos: se hace a mano.
+  manifest: withBasePath('/manifest.json'),
   appleWebApp: {
     capable: true,
-    title: 'WeeklyBurn',
+    title: 'DiDiTracker',
     statusBarStyle: 'black-translucent',
   },
   formatDetection: { telephone: false },
   icons: {
-    icon: [{ url: '/icon.svg', type: 'image/svg+xml' }],
-    apple: [{ url: '/apple-icon.png', sizes: '180x180', type: 'image/png' }],
+    icon: [{ url: withBasePath('/icons/icon.svg'), type: 'image/svg+xml' }],
+    apple: [{ url: withBasePath('/icons/apple-icon.png'), sizes: '180x180', type: 'image/png' }],
   },
 };
 
 export const viewport: Viewport = {
-  themeColor: '#09090b',
+  // Mismo color que `theme_color` del manifest (barra de estado y splash).
+  themeColor: '#0f172a',
   width: 'device-width',
   initialScale: 1,
   maximumScale: 1,

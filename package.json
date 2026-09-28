@@ -2,10 +2,11 @@
   "name": "weeklyburn",
   "version": "1.0.0",
   "private": true,
-  "description": "WeeklyBurn - PWA de control de cupo diario para ingresos semanales",
+  "description": "DiDi Analytics & Tracker - PWA de cupo diario y analítica operativa para conductores",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:static": "STATIC_EXPORT=true next build && touch out/.nojekyll",
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",

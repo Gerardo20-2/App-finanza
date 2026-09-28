@@ -2,6 +2,8 @@
 
 import { useEffect } from 'react';
 
+import { BASE_PATH, withBasePath } from '@/lib/basePath';
+
 /**
  * Registra el service worker una sola vez al montar. Va en un componente
  * cliente aparte para que `layout.tsx` siga siendo un Server Component.
@@ -14,7 +16,8 @@ export function ServiceWorkerProvider() {
     if (process.env.NODE_ENV !== 'production') return;
 
     const register = () => {
-      navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => {
+      // En GitHub Pages la app vive bajo `/<repo>/`: el SW y su alcance también.
+      navigator.serviceWorker.register(withBasePath('/sw.js'), { scope: `${BASE_PATH}/` }).catch(() => {
         /* Sin SW la app sigue funcionando: IndexedDB ya es offline-first. */
       });
     };
