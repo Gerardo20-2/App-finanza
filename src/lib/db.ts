@@ -35,6 +35,60 @@ export interface Transaction {
   isQuickTap: boolean; // True si fue registrado por botón de 1 toque
 }
 
+/**
+ * Auditoría de kilometraje de un día. Se guarda aparte de las transacciones:
+ * nada de esto entra al motor financiero ni mueve el cupo o el saldo.
+ *
+ * Los números se guardan como texto tal cual se capturaron (`'8:30'`,
+ * `'45120'`) para no perder lo que el usuario escribió; `operationalAnalytics.ts` los
+ * interpreta al calcular.
+ */
+export interface DailyLog {
+  dateKey: string; // YYYY-MM-DD local, llave primaria
+  kmInicio: string;
+  kmFin: string;
+  kmDidi: string;
+  /**
+   * Duración total conectado. La llave conserva su nombre original para no
+   * perder lo capturado antes; acepta horas o minutos (ver `parseDurationMinutes`).
+   */
+  horasConectado: string;
+  /** Tiempo activo en viaje o recogida, según el tablero de DiDi. */
+  tiempoActivo: string;
+  numViajes: string;
+  /** Ingreso reportado por DiDi ese día. Sólo alimenta la analítica operativa. */
+  ingresoDidi: string;
+  updatedAt: string;
+}
+
+export type DailyLogFields = Omit<DailyLog, 'dateKey' | 'updatedAt'>;
+
+export const EMPTY_DAILY_LOG: DailyLogFields = {
+  kmInicio: '',
+  kmFin: '',
+  kmDidi: '',
+  horasConectado: '',
+  tiempoActivo: '',
+  numViajes: '',
+  ingresoDidi: '',
+};
+
+/**
+ * Los registros guardados antes de `tiempoActivo`/`numViajes` no traen esos
+ * campos; se rellenan en blanco al leer.
+ */
+export function readDailyLogFields(log: Partial<DailyLog> | undefined): DailyLogFields {
+  return {
+    kmInicio: log?.kmInicio ?? '',
+    kmFin: log?.kmFin ?? '',
+    kmDidi: log?.kmDidi ?? '',
+    horasConectado: log?.horasConectado ?? '',
+    tiempoActivo: log?.tiempoActivo ?? '',
+    numViajes: log?.numViajes ?? '',
+    ingresoDidi: log?.ingresoDidi ?? '',
+  };
+}
+
 export interface UserSettings {
   id?: number;
   cycleStartDay: number; // 0 (Domingo) a 6 (Sábado)
@@ -66,6 +120,7 @@ export class WeeklyBurnDB extends Dexie {
   cycles!: Table<WeeklyCycle, number>;
   transactions!: Table<Transaction, number>;
   settings!: Table<UserSettings, number>;
+  dailyLogs!: Table<DailyLog, string>;
 
   constructor() {
     super('weeklyburn');
@@ -74,6 +129,12 @@ export class WeeklyBurnDB extends Dexie {
       cycles: '++id, startDate, endDate, status',
       transactions: '++id, cycleId, category, date, [cycleId+date], [cycleId+category]',
       settings: '++id',
+    });
+
+    // v2 sólo agrega la tabla de auditoría de kilometraje; las demás tablas no
+    // cambian, así que no hace falta migrar datos existentes.
+    this.version(2).stores({
+      dailyLogs: 'dateKey',
     });
   }
 }
@@ -270,9 +331,32 @@ export async function getTransactionsForCycle(cycleId: number): Promise<Transact
   return db.transactions.where('cycleId').equals(cycleId).toArray();
 }
 
+/* -------------------------------------------------------------------------- */
+/*                          Auditoría de kilometraje                          */
+/* -------------------------------------------------------------------------- */
+
+export async function getDailyLogsInRange(startKey: string, endKey: string): Promise<DailyLog[]> {
+  return db.dailyLogs.where('dateKey').between(startKey, endKey, true, true).toArray();
+}
+
+/** Crea o actualiza la auditoría del día, fusionando sólo los campos dados. */
+export async function saveDailyLog(dateKey: string, patch: Partial<DailyLogFields>): Promise<void> {
+  await db.transaction('rw', db.dailyLogs, async () => {
+    const current = await db.dailyLogs.get(dateKey);
+    await db.dailyLogs.put({
+      ...EMPTY_DAILY_LOG,
+      ...(current ?? {}),
+      ...patch,
+      dateKey,
+      updatedAt: new Date().toISOString(),
+    });
+  });
+}
+
 /** Borra todo. Usado por el botón destructivo de Ajustes. */
 export async function wipeAllData(): Promise<void> {
-  await db.transaction('rw', db.cycles, db.transactions, db.settings, async () => {
+  await db.transaction('rw', [db.cycles, db.transactions, db.settings, db.dailyLogs], async () => {
+    await db.dailyLogs.clear();
     await db.transactions.clear();
     await db.cycles.clear();
     await db.settings.clear();

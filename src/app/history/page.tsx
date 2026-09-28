@@ -5,8 +5,11 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { AnimatePresence, motion, useMotionValue, useTransform } from 'framer-motion';
 import { Archive, Trash2 } from 'lucide-react';
 
+import { MileageAuditPanel } from '@/components/history/MileageAuditPanel';
+import { IrdBadge, OperationalDashboard } from '@/components/history/OperationalDashboard';
 import { Card } from '@/components/ui/card';
 import { useHapticSound } from '@/hooks/useHapticSound';
+import { useOperationalAnalytics } from '@/hooks/useOperationalAnalytics';
 import { useWeeklyBudget } from '@/hooks/useWeeklyBudget';
 import {
   calculateBudget,
@@ -14,7 +17,13 @@ import {
   CATEGORY_LABELS,
   type ExpenseCategory,
 } from '@/lib/budgetEngine';
-import { db, type Transaction, type WeeklyCycle } from '@/lib/db';
+import {
+  db,
+  getDailyLogsInRange,
+  type DailyLog,
+  type Transaction,
+  type WeeklyCycle,
+} from '@/lib/db';
 import {
   cn,
   formatCurrency,
@@ -22,6 +31,8 @@ import {
   formatShortDate,
   formatTime,
   parseTimestamp,
+  roundCurrency,
+  toDateKey,
 } from '@/lib/utils';
 
 /** Umbral de arrastre (px) para confirmar el borrado. */
@@ -114,15 +125,50 @@ export default function HistoryPage() {
     [],
   );
 
-  /** Movimientos del ciclo activo agrupados por día, del más reciente al más viejo. */
+  const dailyLogs = useLiveQuery<DailyLog[], DailyLog[]>(
+    () =>
+      cycle ? getDailyLogsInRange(cycle.startDate, cycle.endDate) : Promise.resolve([]),
+    [cycle?.startDate, cycle?.endDate],
+    [],
+  );
+
+  const logsByDay = useMemo(
+    () => new Map(dailyLogs.map((log) => [log.dateKey, log])),
+    [dailyLogs],
+  );
+
+  const todayKey = toDateKey(now);
+
+  const analytics = useOperationalAnalytics({
+    now,
+    weekStartDay: settings.cycleStartDay,
+    cycleStartDate: cycle?.startDate,
+    cycleEndDate: cycle?.endDate,
+  });
+  const starDateKey = analytics.month.starDay?.metrics.dateKey;
+
+  /**
+   * Tarjetas diarias del ciclo activo, de la más reciente a la más vieja. Un
+   * día aparece si tiene movimientos, si ya tiene auditoría de km, o si es hoy
+   * (para poder capturar el odómetro aunque todavía no haya gastos).
+   */
   const groupedCurrent = useMemo(() => {
     const byDay = new Map<string, Transaction[]>();
 
     for (const item of [...transactions].sort((a, b) => b.date.localeCompare(a.date))) {
-      const key = item.date.slice(0, 10);
+      // Día LOCAL, igual que el motor: `date` está en UTC y cortarlo directo
+      // mandaría las cargas de la noche a la tarjeta del día siguiente.
+      const key = toDateKey(parseTimestamp(item.date));
       const bucket = byDay.get(key);
       if (bucket) bucket.push(item);
       else byDay.set(key, [item]);
+    }
+
+    for (const log of dailyLogs) {
+      if (!byDay.has(log.dateKey)) byDay.set(log.dateKey, []);
+    }
+    if (cycle && todayKey >= cycle.startDate && todayKey <= cycle.endDate && !byDay.has(todayKey)) {
+      byDay.set(todayKey, []);
     }
 
     return [...byDay.entries()]
@@ -131,8 +177,13 @@ export default function HistoryPage() {
         dateKey,
         items,
         total: items.reduce((sum, item) => sum + item.amount, 0),
+        gas: roundCurrency(
+          items
+            .filter((item) => item.category === 'combustible')
+            .reduce((sum, item) => sum + item.amount, 0),
+        ),
       }));
-  }, [transactions]);
+  }, [transactions, dailyLogs, cycle, todayKey]);
 
   return (
     <main className="min-h-[100dvh] px-4 pt-safe">
@@ -163,13 +214,23 @@ export default function HistoryPage() {
               {groupedCurrent.map((group) => (
                 <div key={group.dateKey}>
                   <div className="mb-1.5 flex items-baseline justify-between px-1">
-                    <span className="text-[11px] font-medium text-zinc-500 first-letter:uppercase">
-                      {formatShortDate(parseTimestamp(group.dateKey))}
+                    <span className="flex items-center gap-2">
+                      <span className="text-[11px] font-medium text-zinc-500 first-letter:uppercase">
+                        {formatShortDate(parseTimestamp(group.dateKey))}
+                      </span>
+                      <IrdBadge
+                        ird={analytics.irdByDay.get(group.dateKey)}
+                        isStar={group.dateKey === starDateKey}
+                      />
                     </span>
                     <span className="text-[11px] font-semibold tabular-nums text-zinc-600">
                       {formatCurrency(group.total, settings.currencySymbol)}
                     </span>
                   </div>
+
+                  {group.items.length === 0 ? (
+                    <p className="mb-2 px-1 text-[11px] text-zinc-600">Sin movimientos este día.</p>
+                  ) : null}
 
                   <ul className="space-y-2">
                     <AnimatePresence initial={false}>
@@ -193,6 +254,16 @@ export default function HistoryPage() {
                       ))}
                     </AnimatePresence>
                   </ul>
+
+                  <div className="mt-2">
+                    <MileageAuditPanel
+                      dateKey={group.dateKey}
+                      log={logsByDay.get(group.dateKey)}
+                      gasolinaTotal={group.gas}
+                      currencySymbol={settings.currencySymbol}
+                      onToggle={() => play('tap')}
+                    />
+                  </div>
                 </div>
               ))}
             </div>
@@ -277,6 +348,12 @@ export default function HistoryPage() {
           </ul>
         )}
       </section>
+
+      <OperationalDashboard
+        month={analytics.month}
+        currencySymbol={settings.currencySymbol}
+        onToggle={() => play('tap')}
+      />
     </main>
   );
 }
